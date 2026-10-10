@@ -1,0 +1,8 @@
+build/
+dist/
+work/
+*.log
+status.json
+ui-status.json
+*.user
+.vs/
