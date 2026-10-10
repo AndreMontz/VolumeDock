@@ -22,7 +22,7 @@ namespace Win10Audio
 
         public static SpatialState Read(string deviceId)
         {
-            SpatialState unknown = new SpatialState { Label = "Configurar áudio espacial", Supported = false };
+            SpatialState unknown = new SpatialState { Label = Localization.Text("SpatialConfigure"), Supported = false };
             if (ConfigurationType == null || String.IsNullOrEmpty(deviceId)) return unknown;
 
             try
@@ -43,7 +43,7 @@ namespace Win10Audio
                 if (!(supportedValue is bool)) return unknown;
                 bool supported = (bool)supportedValue;
                 if (!supported)
-                    return new SpatialState { Label = "Não disponível para esta saída", Supported = false };
+                    return new SpatialState { Label = Localization.Text("SpatialUnavailable"), Supported = false };
 
                 // Default is the user's selected format. Active may differ due
                 // to a temporary system change, and is only a read fallback.
@@ -54,10 +54,11 @@ namespace Win10Audio
                     return new SpatialState { Label = unknown.Label, Supported = true };
 
                 if (format == Guid.Empty)
-                    return new SpatialState { Label = "Desativado", Supported = true };
+                    return new SpatialState { Label = Localization.Text("SpatialOff"), Supported = true };
 
                 string label;
-                if (!FormatNames.TryGetValue(format, out label)) label = "Áudio espacial ativo";
+                if (!FormatNames.TryGetValue(format, out label)) label = Localization.Text("SpatialActive");
+                else if (label == "WindowsSonicHeadphones") label = Localization.Text("WindowsSonicHeadphones");
                 return new SpatialState { Label = label, Supported = true };
             }
             catch (Exception)
@@ -85,7 +86,9 @@ namespace Win10Audio
             Dictionary<Guid, string> names = new Dictionary<Guid, string>();
             Type subtypeType = LoadType("Windows.Media.Audio.SpatialAudioFormatSubtype, Windows.Media.Audio, ContentType=WindowsRuntime");
             if (subtypeType == null) return names;
-            AddFormat(names, subtypeType, "WindowsSonic", "Windows Sonic para fones de ouvido");
+            // Store a stable key, then resolve it in Read so live language
+            // changes do not leave a translated value in this static cache.
+            AddFormat(names, subtypeType, "WindowsSonic", "WindowsSonicHeadphones");
             AddFormat(names, subtypeType, "DolbyAtmosForHeadphones", "Dolby Atmos for Headphones");
             AddFormat(names, subtypeType, "DolbyAtmosForHomeTheater", "Dolby Atmos for Home Theater");
             AddFormat(names, subtypeType, "DolbyAtmosForSpeakers", "Dolby Atmos for Speakers");

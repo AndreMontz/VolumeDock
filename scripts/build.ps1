@@ -10,7 +10,7 @@ if (!(Test-Path -LiteralPath $compiler)) { throw 'The x64 .NET Framework compile
 $srcRoot = Join-Path $repoRoot 'src'
 $references = @('System.dll','System.Core.dll','System.Drawing.dll','System.Windows.Forms.dll','System.Web.Extensions.dll','System.Xaml.dll') | ForEach-Object { '/reference:' + (Join-Path $frameworkRoot $_) }
 $references += @('PresentationCore.dll','PresentationFramework.dll','WindowsBase.dll') | ForEach-Object { '/reference:' + (Join-Path $frameworkRoot ('WPF\' + $_)) }
-$sources = @('AudioPanel.cs','AudioBackend.cs','TrayVolumeHook.cs','SpatialAudioState.cs','AssemblyInfo.cs') | ForEach-Object { Join-Path $srcRoot $_ }
+$sources = @('AudioPanel.cs','AudioBackend.cs','TrayVolumeHook.cs','SpatialAudioState.cs','Localization.cs','AssemblyInfo.cs') | ForEach-Object { Join-Path $srcRoot $_ }
 $compilerArguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/langversion:5','/utf8output','/codepage:65001',
     ('/out:' + (Join-Path $OutputDirectory 'VolumeDock.exe')),
     ('/win32manifest:' + (Join-Path $srcRoot 'AudioPanel.manifest')),

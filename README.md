@@ -8,7 +8,7 @@ VolumeDock puts output devices, master volume, and per-app sliders in one compac
 
 ![VolumeDock sound output panel](docs/images/panel.png)
 
-*Preview with representative devices and audio sessions. The interface is in Brazilian Portuguese.*
+*English preview with representative devices and audio sessions. English and Português (Brasil) are available.*
 
 ## What it does
 
@@ -19,12 +19,11 @@ VolumeDock puts output devices, master volume, and per-app sliders in one compac
 - Toggle the panel with **Ctrl + Win + V**. Dismiss it by clicking outside, pressing **Esc**, or clicking the back arrow.
 - Hear a short Windows sound when changing master volume or System Sounds. App sliders remain silent.
 - See the selected output's spatial-audio status and open Windows sound settings to change it.
-
-The interface is currently in **Brazilian Portuguese (pt-BR)**. This README is in English.
+- Follow the Windows display language automatically, or choose English or Português (Brasil) in the panel.
 
 ## Install
 
-Download **`VolumeDock-1.0.0-Setup-x64.exe`** from [Releases](https://github.com/AndreMontz/VolumeDock/releases) and run it. Follow the installer to choose the installation location and startup options.
+Download **`VolumeDock-1.0.0-Setup-x64.exe`** from [Releases](https://github.com/AndreMontz/VolumeDock/releases) and run it. Choose English or Português (Brasil) in the installer, then select the installation location and startup options.
 
 For a portable copy, download **`VolumeDock-1.0.0-Portable-x64.zip`**, extract the entire archive to a writable folder, and run **`VolumeDock.exe`**. Keep the included license files with the application.
 
@@ -42,6 +41,14 @@ The mixer displays existing audio sessions on the default output. An app may nee
 
 The spatial-audio row reads the actual Windows configuration. Clicking it opens native sound settings. To change Windows Sonic or another spatial format, use the output device's properties in Windows. VolumeDock does not simulate a spatial-audio selection.
 
+## Language
+
+VolumeDock follows the Windows display language by default: Portuguese uses **Português (Brasil)**, and other languages use **English**. Click the globe in the panel's footer to choose **System language (automatic)**, **English**, or **Português (Brasil)**. The change takes effect immediately.
+
+On a first installation, choosing a setup language different from the Windows language also selects that language for the app. Upgrades preserve your existing app preference. Portable copies start with automatic selection.
+
+The preference is saved in `%LOCALAPPDATA%\VolumeDock\settings.json` as `Language`, with the value `system`, `en`, or `pt-BR`. Device and application names come from Windows and the apps themselves.
+
 ## Command line
 
 Run these commands from the folder containing the executable:
@@ -51,13 +58,16 @@ Run these commands from the folder containing the executable:
 .\VolumeDock.exe --toggle     # Open or close the panel
 .\VolumeDock.exe --quit       # Exit; native volume behavior returns
 .\VolumeDock.exe --disable    # Exit and remove VolumeDock's startup shortcut
+.\VolumeDock.exe --language=en     # Save English as the app language
+.\VolumeDock.exe --language=pt-BR  # Save Português (Brasil) as the app language
+.\VolumeDock.exe --language=system # Follow the Windows display language
 ```
 
 Only one instance runs at a time. `--disable` keeps the application files so you can start it again later. Use the installer uninstaller to remove an installed copy.
 
 ## Build from source
 
-The application uses C# 5, WPF, and the .NET Framework compiler supplied with Windows. No NuGet packages are required.
+The application uses C# 5, WPF, and the .NET Framework compiler supplied with Windows. No NuGet packages are required. The build includes `src/Localization.cs`; language settings use the framework's `System.Web.Extensions` JSON support.
 
 From the repository root, run:
 
@@ -75,7 +85,12 @@ To generate release packages, install [Inno Setup](https://jrsoftware.org/isinfo
 
 The installer specification is in [`installer/VolumeDock.iss`](installer/VolumeDock.iss).
 
-The executable is written to `build/`; the installer, portable ZIP, and `SHA256SUMS.txt` are written to `dist/`. To render the documentation preview without accessing the computer's audio devices, run `build\VolumeDock.exe --render-demo docs\images\panel.png`.
+The executable is written to `build/`; the installer, portable ZIP, and `SHA256SUMS.txt` are written to `dist/`. Render documentation previews with representative data, without accessing the computer's audio devices or changing the saved language preference:
+
+```powershell
+.\build\VolumeDock.exe --render-demo docs\images\panel.png --preview-language=en
+.\build\VolumeDock.exe --render-demo docs\images\panel-pt-BR.png --preview-language=pt-BR
+```
 
 ## Troubleshooting
 
@@ -93,7 +108,7 @@ The executable is written to `build/`; the installer, portable ZIP, and `SHA256S
 
 VolumeDock uses Windows Core Audio for device enumeration, volume, mute, and session controls. Its spatial-audio status comes from the public Windows Runtime API. Lightweight keyboard and mouse hooks recognize the shortcut and clicks on the existing volume icon; exiting releases those hooks. It does not inject code into Explorer or install an audio driver.
 
-VolumeDock does not upload telemetry. The application runs locally and writes diagnostic files only to its local application-data folder.
+VolumeDock does not upload telemetry. The application runs locally and stores its language preference and diagnostic files in its local application-data folder.
 
 ## License and credits
 

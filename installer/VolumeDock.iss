@@ -23,6 +23,9 @@ MinVersion=10.0.17763
 DisableProgramGroupPage=yes
 DisableDirPage=auto
 UsePreviousTasks=yes
+LanguageDetectionMethod=uilanguage
+ShowLanguageDialog=yes
+UsePreviousLanguage=no
 CloseApplications=no
 RestartApplications=no
 RestartIfNeededByRun=no
@@ -40,8 +43,8 @@ VersionInfoProductName=VolumeDock
 VersionInfoDescription=VolumeDock per-user installer
 
 [Languages]
-Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
 Name: "startup"; Description: "{cm:StartupTask}"; GroupDescription: "{cm:StartupGroup}"; Flags: checkedonce
@@ -52,11 +55,21 @@ english.StartupGroup=Startup:
 english.StopShortcut=Stop VolumeDock
 english.UninstallShortcut=Uninstall VolumeDock
 english.LaunchTask=Start VolumeDock now
+english.NetRequired=VolumeDock requires Microsoft .NET Framework 4.8 or later.%nInstall it from https://dotnet.microsoft.com/download/dotnet-framework/net48 and run this installer again.
+english.StopFailed=Could not stop VolumeDock: %1
+english.StopCommandFailed=The command to stop VolumeDock failed (code %1).
+english.StillRunning=VolumeDock is still running. Use the "Stop VolumeDock" shortcut and try again.
+english.RunningExeMissing=VolumeDock is running, but its executable could not be found. Stop the application and try again.
 brazilianportuguese.StartupTask=Iniciar o VolumeDock ao entrar no Windows
 brazilianportuguese.StartupGroup=Inicialização:
 brazilianportuguese.StopShortcut=Parar VolumeDock
 brazilianportuguese.UninstallShortcut=Desinstalar VolumeDock
 brazilianportuguese.LaunchTask=Iniciar o VolumeDock agora
+brazilianportuguese.NetRequired=O VolumeDock precisa do Microsoft .NET Framework 4.8 ou posterior.%nInstale-o em https://dotnet.microsoft.com/download/dotnet-framework/net48 e execute este instalador novamente.
+brazilianportuguese.StopFailed=Não foi possível encerrar o VolumeDock: %1
+brazilianportuguese.StopCommandFailed=O comando para encerrar o VolumeDock falhou (código %1).
+brazilianportuguese.StillRunning=O VolumeDock ainda está em execução. Use o atalho "Parar VolumeDock" e tente novamente.
+brazilianportuguese.RunningExeMissing=O VolumeDock está em execução, mas seu executável não foi encontrado. Encerre o aplicativo e tente novamente.
 
 [Files]
 Source: "..\build\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
@@ -79,12 +92,40 @@ Name: "{userstartup}\VolumeDock"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app
 Type: files; Name: "{userstartup}\VolumeDock.lnk"; Tasks: not startup; Check: IsCurrentInstallStartupLink
 
 [Run]
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchTask}"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\{#AppExe}"; Parameters: "{code:GetLaunchParameters}"; Description: "{cm:LaunchTask}"; Flags: postinstall nowait skipifsilent
 
 [Code]
 const
   { Kept compatible with the original customized panel for clean migration. }
   PanelMutexes = 'Local\Win10AudioPanel.Instance,Local\VolumeDock.Instance';
+  OwnUninstallKey = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{2A6E6F1D-26A7-49CB-B948-D991E0E8A460}_is1';
+
+var
+  IsUpgrade: Boolean;
+
+function GetLaunchParameters(Param: String): String;
+var
+  SelectedAppLanguage, SystemAppLanguage: String;
+begin
+  { The application keeps its own language preference during upgrades. On the
+    first interactive install, preserve automatic language unless the selected
+    setup language differs from the language the app derives from Windows.
+    Silent installs skip the Run entry and never change app preferences. }
+  Result := '';
+  if not IsUpgrade then
+  begin
+    if ActiveLanguage = 'brazilianportuguese' then
+      SelectedAppLanguage := 'pt-BR'
+    else
+      SelectedAppLanguage := 'en';
+    if (GetUILanguage and $3FF) = $16 then
+      SystemAppLanguage := 'pt-BR'
+    else
+      SystemAppLanguage := 'en';
+    if SelectedAppLanguage <> SystemAppLanguage then
+      Result := '--language=' + SelectedAppLanguage;
+  end;
+end;
 
 function IsCurrentInstallStartupLink: Boolean;
 var
@@ -115,10 +156,10 @@ end;
 
 function InitializeSetup: Boolean;
 begin
+  IsUpgrade := RegKeyExists(HKCU64, OwnUninstallKey) or RegKeyExists(HKCU32, OwnUninstallKey);
   Result := HasNetFramework48;
   if not Result then
-    SuppressibleMsgBox('O VolumeDock precisa do Microsoft .NET Framework 4.8 ou posterior.' + #13#10 +
-      'Instale-o em https://dotnet.microsoft.com/download/dotnet-framework/net48 e execute este instalador novamente.',
+    SuppressibleMsgBox(CustomMessage('NetRequired'),
       mbError, MB_OK, IDOK);
 end;
 
@@ -132,12 +173,12 @@ begin
   Log('Stopping VolumeDock through its quit IPC endpoint: ' + Executable);
   if not Exec(Executable, '--quit', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
   begin
-    Result := 'Não foi possível encerrar o VolumeDock: ' + SysErrorMessage(ExitCode);
+    Result := FmtMessage(CustomMessage('StopFailed'), [SysErrorMessage(ExitCode)]);
     Exit;
   end;
   if ExitCode <> 0 then
   begin
-    Result := 'O comando para encerrar o VolumeDock falhou (código ' + IntToStr(ExitCode) + ').';
+    Result := FmtMessage(CustomMessage('StopCommandFailed'), [IntToStr(ExitCode)]);
     Exit;
   end;
   { Exec waits for the signal-sending process, then separately waits for the
@@ -148,7 +189,7 @@ begin
       Exit;
     Sleep(50);
   end;
-  Result := 'O VolumeDock ainda está em execução. Use o atalho "Parar VolumeDock" e tente novamente.';
+  Result := CustomMessage('StillRunning');
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -172,7 +213,7 @@ begin
     if FileExists(ExpandConstant('{app}\{#AppExe}')) then
       StopError := StopRunningPanel(ExpandConstant('{app}\{#AppExe}'))
     else
-      StopError := 'O VolumeDock está em execução, mas seu executável não foi encontrado. Encerre o aplicativo e tente novamente.';
+      StopError := CustomMessage('RunningExeMissing');
   end;
   Result := StopError = '';
   if not Result then

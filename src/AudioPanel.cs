@@ -42,11 +42,21 @@ namespace Win10Audio
         {
             try
             {
+                Localization.Load();
+                string languageArgument = args.FirstOrDefault(delegate(string value) { return value.StartsWith("--language=", StringComparison.Ordinal); });
+                if (languageArgument != null)
+                {
+                    string preference = languageArgument.Substring("--language=".Length);
+                    if (preference != "system" && preference != "en" && preference != "pt-BR") throw new ArgumentException("Supported languages: system, en, pt-BR.");
+                    if (!Localization.SetLanguage(preference)) throw new IOException(Localization.Text("LanguageSaveError"));
+                }
+                string previewLanguage = args.FirstOrDefault(delegate(string value) { return value.StartsWith("--preview-language=", StringComparison.Ordinal); });
+                if (args.Contains("--render-demo") && previewLanguage != null) Localization.SetPreviewLanguage(previewLanguage.Substring("--preview-language=".Length));
                 if (args.Contains("--disable")) { DisablePanel(); return 0; }
-                if (args.Length == 1 && (args[0] == "--diagnostics" || args[0] == "--render" || args[0] == "--render-demo")) throw new ArgumentException("Informe o arquivo de saída.");
+                if (args.Length == 1 && (args[0] == "--diagnostics" || args[0] == "--render" || args[0] == "--render-demo")) throw new ArgumentException(Localization.Text("OutputFileRequired"));
                 if (args.Length >= 2 && args[0] == "--diagnostics")
                 {
-                    var state = new { Devices = AudioBackend.GetDevices(), Master = AudioBackend.GetMaster(), Sessions = AudioBackend.GetSessions(), VolumeIcon = TrayVolumeHook.GetVolumeIconBounds() };
+                    var state = new { Language = Localization.CurrentCultureName, LanguagePreference = Localization.Preference, Devices = AudioBackend.GetDevices(), Master = AudioBackend.GetMaster(), Sessions = AudioBackend.GetSessions(), VolumeIcon = TrayVolumeHook.GetVolumeIconBounds() };
                     File.WriteAllText(args[1], new JavaScriptSerializer().Serialize(state));
                     return 0;
                 }
@@ -76,8 +86,8 @@ namespace Win10Audio
                         using (TrayVolumeHook hook = new TrayVolumeHook(delegate { app.Dispatcher.BeginInvoke(new Action(panel.Toggle)); }, delegate { app.Dispatcher.BeginInvoke(new Action(panel.Dismiss)); }))
                         {
                             panel.VisibleBoundsChanged += hook.SetPanelBounds;
-                            if (!hook.IsInstalled || !hook.IsKeyboardInstalled) throw new InvalidOperationException("Falha na integração do painel de volume: " + hook.InstallationError);
-                            try { File.WriteAllText(Path.Combine(DataDirectory, "status.json"), new JavaScriptSerializer().Serialize(new { Running = true, NativeIconHook = hook.IsInstalled, KeyboardShortcutHook = hook.IsKeyboardInstalled, NativeIconBounds = TrayVolumeHook.GetVolumeIconBounds(), Started = DateTime.Now.ToString("s") })); } catch { }
+                            if (!hook.IsInstalled || !hook.IsKeyboardInstalled) throw new InvalidOperationException(Localization.Text("IntegrationError") + " " + hook.InstallationError);
+                            try { File.WriteAllText(Path.Combine(DataDirectory, "status.json"), new JavaScriptSerializer().Serialize(new { Running = true, Language = Localization.CurrentCultureName, LanguagePreference = Localization.Preference, NativeIconHook = hook.IsInstalled, KeyboardShortcutHook = hook.IsKeyboardInstalled, NativeIconBounds = TrayVolumeHook.GetVolumeIconBounds(), Started = DateTime.Now.ToString("s") })); } catch { }
                             ThreadPool.QueueUserWorkItem(delegate {
                                 try { while (true) { toggle.WaitOne(); app.Dispatcher.BeginInvoke(new Action(panel.Toggle)); } } catch (ObjectDisposedException) { }
                             });
@@ -134,12 +144,19 @@ namespace Win10Audio
         private Brush _accent;
         private Brush _selected;
         private TextBlock _spatialLabel;
+        private readonly TextBlock _headerTitle;
+        private readonly TextBlock _moreText;
+        private readonly Button _backButton;
+        private readonly Button _languageButton;
+        private readonly Border _languagePicker;
+        private readonly StackPanel _languageChoices;
+        private bool _demo;
         private DateTime _openingUntil;
         public event Action<System.Drawing.Rectangle> VisibleBoundsChanged;
 
         public AudioPanel()
         {
-            Title = "Saída de som";
+            Title = Localization.Text("SoundOutput");
             Width = 360;
             Height = 560;
             MinHeight = 240;
@@ -164,10 +181,12 @@ namespace Win10Audio
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(35) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            Button back = new Button { Content = Glyph("\uE72B", 18), Padding = new Thickness(5), ToolTip = "Fechar" };
+            Button back = new Button { Content = Glyph("\uE72B", 18), Padding = new Thickness(5), ToolTip = Localization.Text("Close") };
+            _backButton = back;
             back.Click += delegate { Hide(); _timer.Stop(); };
             header.Children.Add(back);
-            TextBlock title = new TextBlock { Text = "Saída de som", FontSize = 18, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) };
+            TextBlock title = new TextBlock { Text = Localization.Text("SoundOutput"), FontSize = 18, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) };
+            _headerTitle = title;
             Grid.SetColumn(title, 1); header.Children.Add(title);
             StackPanel keys = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
             keys.Children.Add(KeyBadge("\uE782", true)); keys.Children.Add(KeyBadge("CTRL", false)); keys.Children.Add(KeyBadge("V", false));
@@ -177,9 +196,23 @@ namespace Win10Audio
             ScrollViewer scroll = new ScrollViewer { Content = _body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, PanningMode = PanningMode.VerticalOnly };
             Grid.SetRow(scroll, 1); layout.Children.Add(scroll);
             Border footer = new Border { BorderThickness = new Thickness(0, 1, 0, 0), BorderBrush = (Brush)Resources["BorderBrush"], Background = (Brush)Resources["FooterBrush"] };
-            Button more = new Button { Content = new TextBlock { Text = "Mais configurações de volume", FontSize = 13, Foreground = (Brush)Resources["SecondaryBrush"] }, Padding = new Thickness(20, 8, 20, 8) };
+            _moreText = new TextBlock { Text = Localization.Text("MoreVolumeSettings"), FontSize = 13, Foreground = (Brush)Resources["SecondaryBrush"] };
+            Button more = new Button { Content = _moreText, Padding = new Thickness(20, 8, 8, 8) };
             more.Click += delegate { OpenSettings("ms-settings:apps-volume"); };
-            footer.Child = more; Grid.SetRow(footer, 2); layout.Children.Add(footer);
+            Grid footerLayout = new Grid();
+            footerLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            footerLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(42) });
+            footerLayout.Children.Add(more);
+            _languageButton = new Button { Content = Glyph("\uE774", 18), ToolTip = Localization.Text("Language"), Padding = new Thickness(6) };
+            _languageButton.Click += delegate { BuildLanguageChoices(); _languagePicker.Visibility = _languagePicker.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible; };
+            Grid.SetColumn(_languageButton, 1); footerLayout.Children.Add(_languageButton);
+            footer.Child = footerLayout; Grid.SetRow(footer, 2); layout.Children.Add(footer);
+            // Keep language choices inside this window so the outside-click hook
+            // cannot dismiss a separate popup before its selection is delivered.
+            _languageChoices = new StackPanel { Margin = new Thickness(12) };
+            _languagePicker = new Border { Child = _languageChoices, Background = (Brush)Resources["PanelBrush"], BorderBrush = (Brush)Resources["BorderBrush"], BorderThickness = new Thickness(1), Margin = new Thickness(12, 0, 12, 52), VerticalAlignment = VerticalAlignment.Bottom, Visibility = Visibility.Collapsed };
+            Grid.SetRowSpan(_languagePicker, 3); layout.Children.Add(_languagePicker);
+            PreviewMouseLeftButtonDown += delegate { if (_languagePicker.Visibility == Visibility.Visible && !_languagePicker.IsMouseOver && !_languageButton.IsMouseOver) _languagePicker.Visibility = Visibility.Collapsed; };
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
             _timer.Tick += delegate { if (IsVisible) RefreshAudio(false); };
             _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
@@ -218,6 +251,7 @@ namespace Win10Audio
 
         public void Toggle()
         {
+            _languagePicker.Visibility = Visibility.Collapsed;
             if (IsVisible) { Hide(); _timer.Stop(); SaveUiStatus("hidden"); return; }
             _openingUntil = DateTime.UtcNow.AddMilliseconds(350);
             RefreshAudio(true);
@@ -231,6 +265,7 @@ namespace Win10Audio
         public void Dismiss()
         {
             if (!IsVisible) return;
+            _languagePicker.Visibility = Visibility.Collapsed;
             Hide();
             _timer.Stop();
             SaveUiStatus("outside-click");
@@ -272,24 +307,55 @@ namespace Win10Audio
 
         private void SaveUiStatus(string action)
         {
-            try { File.WriteAllText(Path.Combine(Program.DataDirectory, "ui-status.json"), new JavaScriptSerializer().Serialize(new { Action = action, Visible = IsVisible, Active = IsActive, Width = Width, Height = Height, Time = DateTime.Now.ToString("s") })); } catch { }
+            try { File.WriteAllText(Path.Combine(Program.DataDirectory, "ui-status.json"), new JavaScriptSerializer().Serialize(new { Action = action, Language = Localization.CurrentCultureName, LanguagePreference = Localization.Preference, Visible = IsVisible, Active = IsActive, Width = Width, Height = Height, Time = DateTime.Now.ToString("s") })); } catch { }
+        }
+
+        private void BuildLanguageChoices()
+        {
+            _languageChoices.Children.Clear();
+            _languageChoices.Children.Add(Heading(Localization.Text("Language"), 0));
+            string[] preferences = { "system", "en", "pt-BR" };
+            string[] labels = { Localization.Text("LanguageSystem"), Localization.Text("LanguageEnglish"), Localization.Text("LanguagePortugueseBrazil") };
+            for (int i = 0; i < preferences.Length; i++)
+            {
+                string preference = preferences[i];
+                Button choice = new Button { Content = new TextBlock { Text = labels[i], VerticalAlignment = VerticalAlignment.Center }, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(10, 6, 10, 6), MinHeight = 34, Background = Localization.Preference == preference ? _selected : Brushes.Transparent };
+                choice.Click += delegate {
+                    if (!Localization.SetLanguage(preference)) { MessageBox.Show(this, Localization.Text("LanguageSaveError"), "VolumeDock", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+                    _languagePicker.Visibility = Visibility.Collapsed;
+                    ApplyLanguage();
+                };
+                _languageChoices.Children.Add(choice);
+            }
+        }
+
+        public void ApplyLanguage()
+        {
+            Title = _headerTitle.Text = Localization.Text("SoundOutput");
+            _backButton.ToolTip = Localization.Text("Close");
+            _moreText.Text = Localization.Text("MoreVolumeSettings");
+            _languageButton.ToolTip = Localization.Text("Language");
+            _signature = null;
+            if (_demo) LoadDemo(); else RefreshAudio(true);
+            SaveUiStatus("language-changed");
         }
 
         // Render a representative preview without reading or changing this PC's audio.
         public void LoadDemo()
         {
+            _demo = true;
             _synchronizing = true;
             try
             {
                 BuildBody(new List<AudioDevice> {
-                    new AudioDevice { Id = "demo-speakers", Name = "Alto-falantes", IsDefault = true },
-                    new AudioDevice { Id = "demo-headphones", Name = "Fones de ouvido" }
+                    new AudioDevice { Id = "demo-speakers", Name = Localization.Text("DemoSpeakers"), IsDefault = true },
+                    new AudioDevice { Id = "demo-headphones", Name = Localization.Text("DemoHeadphones") }
                 }, new List<AudioSession> {
-                    new AudioSession { Id = "demo-system", Name = "Sons do sistema", IsSystem = true },
-                    new AudioSession { Id = "demo-browser", Name = "Navegador", ProcessId = 1 },
-                    new AudioSession { Id = "demo-music", Name = "Música", ProcessId = 2 }
+                    new AudioSession { Id = "demo-system", Name = Localization.Text("SystemSounds"), IsSystem = true },
+                    new AudioSession { Id = "demo-browser", Name = Localization.Text("DemoBrowser"), ProcessId = 1 },
+                    new AudioSession { Id = "demo-music", Name = Localization.Text("DemoMusic"), ProcessId = 2 }
                 });
-                _spatialLabel.Text = "Desativado";
+                _spatialLabel.Text = Localization.Text("SpatialOff");
                 UpdateRow(_master, 0.60f, false);
                 UpdateRow(_rows["system"], 0.50f, false);
                 UpdateRow(_rows["1"], 0.80f, false);
@@ -326,13 +392,13 @@ namespace Win10Audio
                 finally { _synchronizing = false; }
                 _error = null;
             }
-            catch (Exception error) { Program.Log(error); if (force) { _error = "Não foi possível acessar o dispositivo de áudio. Tente abrir novamente."; BuildBody(new List<AudioDevice>(), new List<AudioSession>()); } }
+            catch (Exception error) { Program.Log(error); if (force) { _error = Localization.Text("AudioAccessError"); BuildBody(new List<AudioDevice>(), new List<AudioSession>()); } }
         }
 
         private void BuildBody(List<AudioDevice> devices, List<AudioSession> sessions)
         {
             _body.Children.Clear(); _rows.Clear(); _master = null;
-            _body.Children.Add(Heading("Dispositivo de saída", 2));
+            _body.Children.Add(Heading(Localization.Text("OutputDevice"), 2));
             foreach (AudioDevice device in devices)
             {
                 AudioDevice captured = device;
@@ -348,9 +414,9 @@ namespace Win10Audio
                 choice.Click += delegate { TryAudio(delegate { AudioBackend.SetDefaultDevice(captured.Id); }); RefreshAudio(true); PositionAtTray(); };
                 _body.Children.Add(choice);
             }
-            if (devices.Count == 0) _body.Children.Add(new TextBlock { Text = _error ?? "Nenhuma saída de áudio conectada", Foreground = (Brush)Resources["SecondaryBrush"], TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 12, 0, 8) });
-            _body.Children.Add(Heading("Áudio espacial", 20));
-            string spatialText = "Configurar áudio espacial";
+            if (devices.Count == 0) _body.Children.Add(new TextBlock { Text = _error ?? Localization.Text("NoOutputs"), Foreground = (Brush)Resources["SecondaryBrush"], TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 12, 0, 8) });
+            _body.Children.Add(Heading(Localization.Text("SpatialAudio"), 20));
+            string spatialText = Localization.Text("SpatialConfigure");
             if (_defaultDeviceId != null) spatialText = SpatialAudioState.Read(_defaultDeviceId).Label;
             Grid spatial = new Grid();
             spatial.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -358,13 +424,13 @@ namespace Win10Audio
             _spatialLabel = new TextBlock { Text = spatialText, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
             spatial.Children.Add(_spatialLabel);
             TextBlock spatialArrow = Glyph("\uE8A7", 12); Grid.SetColumn(spatialArrow, 1); spatial.Children.Add(spatialArrow);
-            Button spatialButton = new Button { Content = spatial, ToolTip = "Configurar o áudio espacial nas propriedades de som do Windows", MinHeight = 40 };
+            Button spatialButton = new Button { Content = spatial, ToolTip = Localization.Text("SpatialConfigureTooltip"), MinHeight = 40 };
             spatialButton.Click += delegate { OpenSettings("ms-settings:sound"); };
             _body.Children.Add(spatialButton);
-            _body.Children.Add(Heading("Mixer de volume", 20));
+            _body.Children.Add(Heading(Localization.Text("VolumeMixer"), 20));
             if (devices.Any(delegate(AudioDevice d) { return d.IsDefault; }))
             {
-                _master = BuildVolumeRow(null, "Volume do sistema", null);
+                _master = BuildVolumeRow(null, Localization.Text("MasterVolume"), null);
                 _body.Children.Add(_master.Container);
                 foreach (AudioSession session in sessions)
                 {
@@ -388,7 +454,7 @@ namespace Win10Audio
             if (icon != null) iconGrid.Children.Add(new Image { Source = icon, Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center });
             else { row.Glyph = Glyph(session == null ? "\uE767" : (session.IsSystem ? "\uE770" : "\uE7F4"), 23); iconGrid.Children.Add(row.Glyph); }
             row.MuteBadge = Glyph("\uE74F", 11); row.MuteBadge.HorizontalAlignment = HorizontalAlignment.Right; row.MuteBadge.VerticalAlignment = VerticalAlignment.Bottom; row.MuteBadge.Background = (Brush)Resources["PanelBrush"]; row.MuteBadge.Visibility = Visibility.Collapsed; iconGrid.Children.Add(row.MuteBadge);
-            Button mute = new Button { Content = iconGrid, Padding = new Thickness(2), ToolTip = name + " — ativar/desativar som" };
+            Button mute = new Button { Content = iconGrid, Padding = new Thickness(2), ToolTip = name + " — " + Localization.Text("MuteToggle") };
             mute.Click += delegate { TryAudio(delegate { if (row.Session == null) AudioBackend.SetMasterMute(!row.IsMuted, row.DeviceId); else AudioBackend.SetSessionMute(row.Session.ProcessId, row.Session.Id, !row.IsMuted, row.DeviceId); }); RefreshAudio(false); };
             container.Children.Add(mute);
             Slider slider = new Slider { Margin = new Thickness(8, 0, 4, 0), ToolTip = name, AutoToolTipPlacement = AutoToolTipPlacement.TopLeft, AutoToolTipPrecision = 0 };

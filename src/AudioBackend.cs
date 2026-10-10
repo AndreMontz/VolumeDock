@@ -135,12 +135,12 @@ namespace Win10Audio
 
         public static void SetDefaultDevice(string deviceId)
         {
-            if (String.IsNullOrEmpty(deviceId)) throw new ArgumentException("Escolha um dispositivo de saída.", "deviceId");
+            if (String.IsNullOrEmpty(deviceId)) throw new ArgumentException(Localization.Text("SelectOutputError"), "deviceId");
             lock (SyncRoot)
             {
                 bool found = false;
                 foreach (AudioDevice device in GetDevices()) if (String.Equals(device.Id, deviceId, StringComparison.OrdinalIgnoreCase)) found = true;
-                if (!found) throw new InvalidOperationException("Esse dispositivo foi desconectado. Abra o menu novamente.");
+                if (!found) throw new InvalidOperationException(Localization.Text("OutputDisconnectedError"));
                 IMMDeviceEnumerator enumerator = null;
                 IPolicyConfig policy = null;
                 string[] previous = new string[3];
@@ -214,7 +214,7 @@ namespace Win10Audio
                     control.GetIconPath(out iconPath);
                     string processPath;
                     string name = GetProcessName((int)processId, displayName, out processPath);
-                    if (system) name = "Sons do sistema";
+                    if (system) name = Localization.Text("SystemSounds");
                     grouped.Add(key, new AudioSession
                     {
                         ProcessId = (int)processId, Id = id, Name = name,
@@ -282,7 +282,7 @@ namespace Win10Audio
                 if (changed == 0)
                 {
                     if (failure != null) throw failure;
-                    throw new InvalidOperationException("O aplicativo encerrou sua sessão de áudio. Abra o menu novamente.");
+                    throw new InvalidOperationException(Localization.Text("SessionEndedError"));
                 }
             }
         }
@@ -331,7 +331,7 @@ namespace Win10Audio
             {
                 enumerator = CreateEnumerator();
                 int result = enumerator.GetDefaultAudioEndpoint(0, 1, out device);
-                if (result == unchecked((int)0x80070490)) throw new InvalidOperationException("Nenhum dispositivo de saída conectado.");
+                if (result == unchecked((int)0x80070490)) throw new InvalidOperationException(Localization.Text("NoOutputError"));
                 Check(result);
                 VerifyDevice(device, expectedDeviceId);
                 Guid masterId = typeof(IAudioEndpointVolume).GUID;
@@ -347,7 +347,7 @@ namespace Win10Audio
             string currentId;
             Check(device.GetId(out currentId));
             if (!String.Equals(currentId, expectedDeviceId, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("A saída de áudio mudou. Atualize o painel antes de ajustar o volume.");
+                throw new InvalidOperationException(Localization.Text("OutputChangedError"));
         }
 
         private static string ReadDeviceName(IMMDevice device)
@@ -364,7 +364,7 @@ namespace Win10Audio
                     string name = Marshal.PtrToStringUni(value.Pointer);
                     if (!String.IsNullOrEmpty(name)) return name;
                 }
-                return "Dispositivo de áudio";
+                return Localization.Text("AudioDeviceFallback");
             }
             finally { PropVariantClear(ref value); Release(store); }
         }
@@ -372,7 +372,7 @@ namespace Win10Audio
         private static string GetProcessName(int processId, string displayName, out string processPath)
         {
             processPath = null;
-            string fallback = "Aplicativo";
+            string fallback = Localization.Text("ApplicationFallback");
             if (processId > 0)
             {
                 try
@@ -420,7 +420,7 @@ namespace Win10Audio
         private static void ValidateVolume(float volume)
         {
             if (Single.IsNaN(volume) || Single.IsInfinity(volume) || volume < 0 || volume > 1)
-                throw new ArgumentOutOfRangeException("volume", "O volume deve estar entre 0 e 1.");
+                throw new ArgumentOutOfRangeException("volume", Localization.Text("VolumeRangeError"));
         }
         private static void Check(int result) { if (result < 0) Marshal.ThrowExceptionForHR(result); }
         private static void Release(object value)
