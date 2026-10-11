@@ -14,6 +14,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -56,7 +57,7 @@ namespace Win10Audio
                 if (args.Length == 1 && (args[0] == "--diagnostics" || args[0] == "--render" || args[0] == "--render-demo")) throw new ArgumentException(Localization.Text("OutputFileRequired"));
                 if (args.Length >= 2 && args[0] == "--diagnostics")
                 {
-                    var state = new { Language = Localization.CurrentCultureName, LanguagePreference = Localization.Preference, Devices = AudioBackend.GetDevices(), Master = AudioBackend.GetMaster(), Sessions = AudioBackend.GetSessions(), VolumeIcon = TrayVolumeHook.GetVolumeIconBounds() };
+                    var state = new { Language = Localization.CurrentCultureName, LanguagePreference = Localization.Preference, Devices = AudioBackend.GetDevices(), InputDevices = AudioBackend.GetInputDevices(), Master = AudioBackend.GetMaster(), Sessions = AudioBackend.GetSessions(), VolumeIcon = TrayVolumeHook.GetVolumeIconBounds() };
                     File.WriteAllText(args[1], new JavaScriptSerializer().Serialize(state));
                     return 0;
                 }
@@ -131,8 +132,16 @@ namespace Win10Audio
         private readonly StackPanel _body;
         private readonly DispatcherTimer _timer;
         private readonly DispatcherTimer _previewTimer;
+        private readonly DispatcherTimer _closeTimer;
         private VolumeRow _pendingPreview;
+        private readonly List<Button> _openingHeaders = new List<Button>();
+        private TranslateTransform _panelTranslation;
+        private bool _collectOpeningHeaders;
+        private bool _closing;
+        private string _closeAction;
+        private DateTime _lastPreviewStarted = DateTime.MinValue;
         private readonly Dictionary<string, VolumeRow> _rows = new Dictionary<string, VolumeRow>();
+        private readonly Dictionary<string, bool> _expandedSections = new Dictionary<string, bool>(StringComparer.Ordinal);
         private readonly Dictionary<string, ImageSource> _icons = new Dictionary<string, ImageSource>();
         private VolumeRow _master;
         private string _signature;
@@ -176,6 +185,8 @@ namespace Win10Audio
             layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(50) });
             _root = new Border { Background = (Brush)Resources["PanelBrush"], BorderBrush = (Brush)Resources["BorderBrush"], BorderThickness = new Thickness(1), Child = layout };
+            _panelTranslation = new TranslateTransform();
+            _root.RenderTransform = _panelTranslation;
             Content = _root;
             Grid header = new Grid { Margin = new Thickness(14, 0, 20, 0) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(35) });
@@ -183,7 +194,7 @@ namespace Win10Audio
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             Button back = new Button { Content = Glyph("\uE72B", 18), Padding = new Thickness(5), ToolTip = Localization.Text("Close") };
             _backButton = back;
-            back.Click += delegate { Hide(); _timer.Stop(); };
+            back.Click += delegate { CloseAnimated("hidden"); };
             header.Children.Add(back);
             TextBlock title = new TextBlock { Text = Localization.Text("SoundOutput"), FontSize = 18, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) };
             _headerTitle = title;
@@ -215,14 +226,28 @@ namespace Win10Audio
             PreviewMouseLeftButtonDown += delegate { if (_languagePicker.Visibility == Visibility.Visible && !_languagePicker.IsMouseOver && !_languageButton.IsMouseOver) _languagePicker.Visibility = Visibility.Collapsed; };
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
             _timer.Tick += delegate { if (IsVisible) RefreshAudio(false); };
-            _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+            _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(240) };
             _previewTimer.Tick += delegate { _previewTimer.Stop(); PlayPendingPreview(); };
+            _closeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+            _closeTimer.Tick += delegate
+            {
+                _closeTimer.Stop();
+                if (!_closing) return;
+                Hide();
+                _closing = false;
+                _root.BeginAnimation(UIElement.OpacityProperty, null);
+                _panelTranslation.BeginAnimation(TranslateTransform.YProperty, null);
+                _root.Opacity = 1;
+                _panelTranslation.Y = 0;
+                _timer.Stop();
+                SaveUiStatus(_closeAction ?? "hidden");
+            };
             SourceInitialized += delegate { ApplyBackdrop(); };
             IsVisibleChanged += delegate { PublishVisibleBounds(); };
             LocationChanged += delegate { PublishVisibleBounds(); };
             SizeChanged += delegate { PublishVisibleBounds(); };
-            Deactivated += delegate { if (DateTime.UtcNow < _openingUntil) return; Hide(); _timer.Stop(); SaveUiStatus("deactivated"); };
-            PreviewKeyDown += delegate(object sender, KeyEventArgs e) { if (e.Key == Key.Escape) { Hide(); _timer.Stop(); e.Handled = true; } };
+            Deactivated += delegate { if (DateTime.UtcNow < _openingUntil) return; CloseAnimated("deactivated"); };
+            PreviewKeyDown += delegate(object sender, KeyEventArgs e) { if (e.Key == Key.Escape) { CloseAnimated("escape"); e.Handled = true; } };
             Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e) { if (!Program.IsExiting) { e.Cancel = true; Dismiss(); } };
         }
 
@@ -252,12 +277,29 @@ namespace Win10Audio
         public void Toggle()
         {
             _languagePicker.Visibility = Visibility.Collapsed;
-            if (IsVisible) { Hide(); _timer.Stop(); SaveUiStatus("hidden"); return; }
+            if (_closing)
+            {
+                _closeTimer.Stop();
+                _closing = false;
+                _openingUntil = DateTime.UtcNow.AddMilliseconds(350);
+                AnimateOpen();
+                _timer.Start();
+                SaveUiStatus("shown");
+                return;
+            }
+            if (IsVisible) { CloseAnimated("hidden"); return; }
             _openingUntil = DateTime.UtcNow.AddMilliseconds(350);
-            RefreshAudio(true);
+            _expandedSections.Clear();
+            _openingHeaders.Clear();
+            _collectOpeningHeaders = true;
+            try { RefreshAudio(true); }
+            finally { _collectOpeningHeaders = false; }
+            _root.Opacity = 0;
+            _panelTranslation.Y = 10;
             Show();
             PositionAtTray();
             Activate();
+            AnimateOpen();
             _timer.Start();
             SaveUiStatus("shown");
         }
@@ -266,32 +308,82 @@ namespace Win10Audio
         {
             if (!IsVisible) return;
             _languagePicker.Visibility = Visibility.Collapsed;
-            Hide();
+            CloseAnimated("outside-click");
+        }
+
+        private void AnimateOpen()
+        {
+            CubicEase easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+            _root.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(_root.Opacity, 1, TimeSpan.FromMilliseconds(170)) { EasingFunction = easing });
+            _panelTranslation.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(_panelTranslation.Y, 0, TimeSpan.FromMilliseconds(190)) { EasingFunction = easing });
+            for (int i = 0; i < _openingHeaders.Count; i++)
+            {
+                Button header = _openingHeaders[i];
+                header.Opacity = 0;
+                TranslateTransform movement = header.RenderTransform as TranslateTransform;
+                if (movement == null) { movement = new TranslateTransform(); header.RenderTransform = movement; }
+                movement.Y = 6;
+                TimeSpan delay = TimeSpan.FromMilliseconds(i * 28);
+                header.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(135))) { BeginTime = delay, EasingFunction = easing });
+                movement.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(6, 0, new Duration(TimeSpan.FromMilliseconds(150))) { BeginTime = delay, EasingFunction = easing });
+            }
+            _openingHeaders.Clear();
+        }
+
+        private void CloseAnimated(string action)
+        {
+            if (!IsVisible || _closing) return;
+            _closing = true;
+            _closeAction = action;
             _timer.Stop();
-            SaveUiStatus("outside-click");
+            _previewTimer.Stop();
+            _pendingPreview = null;
+            CubicEase easing = new CubicEase { EasingMode = EasingMode.EaseIn };
+            _root.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(_root.Opacity, 0, TimeSpan.FromMilliseconds(130)) { EasingFunction = easing });
+            _panelTranslation.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(_panelTranslation.Y, 8, TimeSpan.FromMilliseconds(140)) { EasingFunction = easing });
+            _closeTimer.Stop();
+            _closeTimer.Start();
         }
 
         private void SchedulePreview(VolumeRow row)
         {
-            if (row.Session != null && !row.Session.IsSystem) return;
+            if (row.Session != null && !row.Session.IsSystem) { _previewTimer.Stop(); _pendingPreview = null; return; }
             _pendingPreview = row;
             _previewTimer.Stop();
+            _previewTimer.Interval = TimeSpan.FromMilliseconds(240);
             if (!row.Slider.IsMouseCaptureWithin) _previewTimer.Start();
         }
 
         private void PlayPendingPreview()
         {
             VolumeRow row = _pendingPreview;
-            _pendingPreview = null;
             if (row == null) return;
-            // SND_SYSTEM assigns the sample to "Sons do sistema", matching
-            // Windows' volume feedback and avoiding an extra mixer app row.
-            const uint flags = 0x00200000 | 0x00010000 | 0x00000001 | 0x00000002;
-            if (!PlaySound("SystemDefault", IntPtr.Zero, flags))
+            // A slider can briefly lose capture while the pointer is still down.
+            // Keep the latest value pending until the interaction actually ends.
+            if (row.MouseAdjusting) return;
+            // Windows Default.wav is a short 410 ms sample. Keep enough space
+            // between previews for it to finish instead of restarting its tail.
+            TimeSpan playbackSpacing = TimeSpan.FromMilliseconds(470);
+            if (_lastPreviewStarted != DateTime.MinValue)
             {
-                string sample = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Media\\Windows Background.wav");
-                if (File.Exists(sample)) PlaySound(sample, IntPtr.Zero, 0x00200000 | 0x00020000 | 0x00000001 | 0x00000002);
+                TimeSpan remaining = playbackSpacing - (DateTime.UtcNow - _lastPreviewStarted);
+                if (remaining > TimeSpan.Zero)
+                {
+                    _previewTimer.Stop();
+                    _previewTimer.Interval = remaining;
+                    _previewTimer.Start();
+                    return;
+                }
             }
+            _pendingPreview = null;
+            // SND_SYSTEM assigns the sample to "Sons do sistema", matching
+            // Windows' volume feedback without a long, easily interrupted chime.
+            string media = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Media");
+            string sample = Path.Combine(media, "Windows Default.wav");
+            if (!File.Exists(sample)) sample = Path.Combine(media, "ding.wav");
+            bool played = File.Exists(sample) && PlaySound(sample, IntPtr.Zero, 0x00200000 | 0x00020000 | 0x00000001 | 0x00000002);
+            if (!played) played = PlaySound("SystemDefault", IntPtr.Zero, 0x00200000 | 0x00010000 | 0x00000001 | 0x00000002);
+            if (played) _lastPreviewStarted = DateTime.UtcNow;
         }
 
         private void PublishVisibleBounds()
@@ -348,6 +440,9 @@ namespace Win10Audio
             try
             {
                 BuildBody(new List<AudioDevice> {
+                    new AudioDevice { Id = "demo-microphone", Name = Localization.Text("DemoMicrophone"), IsDefault = true, IsInput = true },
+                    new AudioDevice { Id = "demo-webcam-mic", Name = Localization.Text("DemoWebcamMic"), IsInput = true }
+                }, new List<AudioDevice> {
                     new AudioDevice { Id = "demo-speakers", Name = Localization.Text("DemoSpeakers"), IsDefault = true },
                     new AudioDevice { Id = "demo-headphones", Name = Localization.Text("DemoHeadphones") }
                 }, new List<AudioSession> {
@@ -368,15 +463,17 @@ namespace Win10Audio
         {
             try
             {
+                bool previousSync = _synchronizing;
+                _synchronizing = true;
+                try
+                {
+                List<AudioDevice> inputs = AudioBackend.GetInputDevices();
                 List<AudioDevice> devices = AudioBackend.GetDevices();
                 AudioDevice selected = devices.FirstOrDefault(delegate(AudioDevice d) { return d.IsDefault; });
                 _defaultDeviceId = selected == null ? null : selected.Id;
                 List<AudioSession> sessions = selected == null ? new List<AudioSession>() : AudioBackend.GetSessions();
-                string signature = String.Join("|", devices.Select(delegate(AudioDevice d) { return d.Id + ":" + d.IsDefault; })) + "#" + String.Join("|", sessions.Select(SessionKey));
-                if (force || signature != _signature) { BuildBody(devices, sessions); _signature = signature; }
-                _synchronizing = true;
-                try
-                {
+                string signature = String.Join("|", inputs.Select(delegate(AudioDevice d) { return d.Id + ":" + d.IsDefault; })) + "#" + String.Join("|", devices.Select(delegate(AudioDevice d) { return d.Id + ":" + d.IsDefault; })) + "#" + String.Join("|", sessions.Select(SessionKey));
+                if (force || signature != _signature) { BuildBody(inputs, devices, sessions); _signature = signature; }
                     if (selected != null)
                     {
                         if (_spatialLabel != null) _spatialLabel.Text = SpatialAudioState.Read(selected.Id).Label;
@@ -388,34 +485,36 @@ namespace Win10Audio
                             if (_rows.TryGetValue(SessionKey(session), out row)) { row.Session = session; UpdateRow(row, session.Volume, session.IsMuted); }
                         }
                     }
-                }
-                finally { _synchronizing = false; }
                 _error = null;
+                }
+                finally { _synchronizing = previousSync; }
             }
-            catch (Exception error) { Program.Log(error); if (force) { _error = Localization.Text("AudioAccessError"); BuildBody(new List<AudioDevice>(), new List<AudioSession>()); } }
+            catch (Exception error)
+            {
+                Program.Log(error);
+                if (force)
+                {
+                    _error = Localization.Text("AudioAccessError");
+                    bool previousSync = _synchronizing;
+                    _synchronizing = true;
+                    try { BuildBody(new List<AudioDevice>(), new List<AudioDevice>(), new List<AudioSession>()); }
+                    finally { _synchronizing = previousSync; }
+                }
+            }
         }
 
-        private void BuildBody(List<AudioDevice> devices, List<AudioSession> sessions)
+        private void BuildBody(List<AudioDevice> inputs, List<AudioDevice> devices, List<AudioSession> sessions)
         {
             _body.Children.Clear(); _rows.Clear(); _master = null;
-            _body.Children.Add(Heading(Localization.Text("OutputDevice"), 2));
-            foreach (AudioDevice device in devices)
-            {
-                AudioDevice captured = device;
-                Button choice = new Button { Padding = new Thickness(0), Background = device.IsDefault ? _selected : Brushes.Transparent, ToolTip = device.Name, MinHeight = 40, Margin = new Thickness(0, 2, 0, 0) };
-                Grid row = new Grid();
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                Border bar = new Border { Width = 3, Height = 17, Background = device.IsDefault ? _accent : Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center }; row.Children.Add(bar);
-                TextBlock icon = Glyph(IsHeadphone(device.Name) ? "\uE7F6" : "\uE7F5", 18); Grid.SetColumn(icon, 1); row.Children.Add(icon);
-                TextBlock label = new TextBlock { Text = device.Name, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(3, 8, 10, 8), VerticalAlignment = VerticalAlignment.Center };
-                Grid.SetColumn(label, 2); row.Children.Add(label); choice.Content = row;
-                choice.Click += delegate { TryAudio(delegate { AudioBackend.SetDefaultDevice(captured.Id); }); RefreshAudio(true); PositionAtTray(); };
-                _body.Children.Add(choice);
-            }
-            if (devices.Count == 0) _body.Children.Add(new TextBlock { Text = _error ?? Localization.Text("NoOutputs"), Foreground = (Brush)Resources["SecondaryBrush"], TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 12, 0, 8) });
-            _body.Children.Add(Heading(Localization.Text("SpatialAudio"), 20));
+            StackPanel inputList = new StackPanel();
+            AddDeviceChoices(inputList, inputs, true);
+            _body.Children.Add(Section("InputDevice", Localization.Text("InputDevice"), inputList));
+
+            StackPanel outputList = new StackPanel();
+            AddDeviceChoices(outputList, devices, false);
+            _body.Children.Add(Section("OutputDevice", Localization.Text("OutputDevice"), outputList));
+
+            StackPanel spatialContent = new StackPanel();
             string spatialText = Localization.Text("SpatialConfigure");
             if (_defaultDeviceId != null) spatialText = SpatialAudioState.Read(_defaultDeviceId).Label;
             Grid spatial = new Grid();
@@ -426,22 +525,91 @@ namespace Win10Audio
             TextBlock spatialArrow = Glyph("\uE8A7", 12); Grid.SetColumn(spatialArrow, 1); spatial.Children.Add(spatialArrow);
             Button spatialButton = new Button { Content = spatial, ToolTip = Localization.Text("SpatialConfigureTooltip"), MinHeight = 40 };
             spatialButton.Click += delegate { OpenSettings("ms-settings:sound"); };
-            _body.Children.Add(spatialButton);
-            _body.Children.Add(Heading(Localization.Text("VolumeMixer"), 20));
+            spatialContent.Children.Add(spatialButton);
+            _body.Children.Add(Section("SpatialAudio", Localization.Text("SpatialAudio"), spatialContent));
+
+            StackPanel mixerContent = new StackPanel();
             if (devices.Any(delegate(AudioDevice d) { return d.IsDefault; }))
             {
                 _master = BuildVolumeRow(null, Localization.Text("MasterVolume"), null);
-                _body.Children.Add(_master.Container);
+                mixerContent.Children.Add(_master.Container);
                 foreach (AudioSession session in sessions)
                 {
                     VolumeRow row = BuildVolumeRow(session, session.Name, GetAppIcon(session));
                     _rows[SessionKey(session)] = row;
-                    _body.Children.Add(row.Container);
+                    mixerContent.Children.Add(row.Container);
                 }
             }
+            else mixerContent.Children.Add(new TextBlock { Text = _error ?? Localization.Text("NoOutputs"), Foreground = (Brush)Resources["SecondaryBrush"], TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 12, 0, 8) });
+            _body.Children.Add(Section("VolumeMixer", Localization.Text("VolumeMixer"), mixerContent));
             _body.Measure(new Size(318, Double.PositiveInfinity));
-            Height = Math.Min(700, Math.Max(300, _body.DesiredSize.Height + 111));
+            Height = Math.Min(700, Math.Max(270, _body.DesiredSize.Height + 111));
             if (IsVisible) PositionAtTray();
+        }
+
+        private void AddDeviceChoices(StackPanel destination, List<AudioDevice> devices, bool input)
+        {
+            foreach (AudioDevice device in devices)
+            {
+                AudioDevice captured = device;
+                Button choice = new Button { Padding = new Thickness(0), Background = device.IsDefault ? _selected : Brushes.Transparent, ToolTip = device.Name, MinHeight = 40, Margin = new Thickness(0, 2, 0, 0) };
+                Grid row = new Grid();
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                Border bar = new Border { Width = 3, Height = 17, Background = device.IsDefault ? _accent : Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center }; row.Children.Add(bar);
+                TextBlock icon = Glyph(input ? "\uE720" : (IsHeadphone(device.Name) ? "\uE7F6" : "\uE7F5"), 18); Grid.SetColumn(icon, 1); row.Children.Add(icon);
+                TextBlock label = new TextBlock { Text = device.Name, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(3, 8, 10, 8), VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(label, 2); row.Children.Add(label); choice.Content = row;
+                choice.Click += delegate { TryAudio(delegate { if (input) AudioBackend.SetDefaultInputDevice(captured.Id); else AudioBackend.SetDefaultDevice(captured.Id); }); RefreshAudio(true); PositionAtTray(); };
+                destination.Children.Add(choice);
+            }
+            if (devices.Count == 0)
+            {
+                string emptyText = input ? Localization.Text("NoInputs") : (_error ?? Localization.Text("NoOutputs"));
+                destination.Children.Add(new TextBlock { Text = emptyText, Foreground = (Brush)Resources["SecondaryBrush"], TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 10, 0, 8) });
+            }
+        }
+
+        private UIElement Section(string key, string title, UIElement content)
+        {
+            bool expanded;
+            if (!_expandedSections.TryGetValue(key, out expanded)) expanded = false;
+            StackPanel section = new StackPanel { Margin = new Thickness(0, 0, 0, 3) };
+            Grid header = new Grid { MinHeight = 42 };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            TextBlock arrow = Glyph(expanded ? "\uE70D" : "\uE76C", 12);
+            arrow.Foreground = (Brush)Resources["SecondaryBrush"];
+            header.Children.Add(arrow);
+            TextBlock label = new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(label, 1); header.Children.Add(label);
+            Border contentHost = new Border { Child = content, Visibility = expanded ? Visibility.Visible : Visibility.Collapsed, Margin = new Thickness(24, 0, 0, 4) };
+            Button toggle = new Button { Content = header, Padding = new Thickness(3, 2, 3, 2), HorizontalContentAlignment = HorizontalAlignment.Stretch, MinHeight = 42, ToolTip = title };
+            if (_collectOpeningHeaders) _openingHeaders.Add(toggle);
+            toggle.Click += delegate
+            {
+                bool expand = contentHost.Visibility != Visibility.Visible;
+                _expandedSections[key] = expand;
+                contentHost.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
+                arrow.Text = expand ? "\uE70D" : "\uE76C";
+                if (expand)
+                {
+                    contentHost.Opacity = 0;
+                    TranslateTransform movement = contentHost.RenderTransform as TranslateTransform;
+                    if (movement == null) { movement = new TranslateTransform(); contentHost.RenderTransform = movement; }
+                    movement.Y = -4;
+                    CubicEase easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+                    contentHost.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(135)) { EasingFunction = easing });
+                    movement.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-4, 0, TimeSpan.FromMilliseconds(155)) { EasingFunction = easing });
+                }
+                _body.Measure(new Size(318, Double.PositiveInfinity));
+                Height = Math.Min(700, Math.Max(270, _body.DesiredSize.Height + 111));
+                if (IsVisible) PositionAtTray();
+            };
+            section.Children.Add(toggle);
+            section.Children.Add(contentHost);
+            return section;
         }
 
         private VolumeRow BuildVolumeRow(AudioSession session, string name, ImageSource icon)
@@ -457,15 +625,16 @@ namespace Win10Audio
             Button mute = new Button { Content = iconGrid, Padding = new Thickness(2), ToolTip = name + " — " + Localization.Text("MuteToggle") };
             mute.Click += delegate { TryAudio(delegate { if (row.Session == null) AudioBackend.SetMasterMute(!row.IsMuted, row.DeviceId); else AudioBackend.SetSessionMute(row.Session.ProcessId, row.Session.Id, !row.IsMuted, row.DeviceId); }); RefreshAudio(false); };
             container.Children.Add(mute);
-            Slider slider = new Slider { Margin = new Thickness(8, 0, 4, 0), ToolTip = name, AutoToolTipPlacement = AutoToolTipPlacement.TopLeft, AutoToolTipPrecision = 0 };
+            Slider slider = new Slider { Minimum = 0, Maximum = 100, Margin = new Thickness(8, 0, 4, 0), ToolTip = name, AutoToolTipPlacement = AutoToolTipPlacement.TopLeft, AutoToolTipPrecision = 0 };
             slider.ValueChanged += delegate(object sender, RoutedPropertyChangedEventArgs<double> e) {
                 if (_synchronizing) return;
                 TryAudio(delegate { if (row.Session == null) AudioBackend.SetMasterVolume((float)(slider.Value / 100), row.DeviceId); else AudioBackend.SetSessionVolume(row.Session.ProcessId, row.Session.Id, (float)(slider.Value / 100), row.DeviceId); });
-                SchedulePreview(row);
+                if (row.MouseAdjusting && !row.SuppressPreview) SchedulePreview(row);
             };
-            slider.PreviewMouseLeftButtonUp += delegate { _previewTimer.Stop(); PlayPendingPreview(); };
-            slider.LostMouseCapture += delegate { _previewTimer.Stop(); PlayPendingPreview(); };
-            slider.PreviewMouseWheel += delegate(object sender, MouseWheelEventArgs e) { slider.Value = Math.Max(0, Math.Min(100, slider.Value + Math.Sign(e.Delta) * 2)); e.Handled = true; };
+            slider.PreviewMouseLeftButtonDown += delegate { row.MouseAdjusting = true; };
+            slider.PreviewMouseLeftButtonUp += delegate { row.MouseAdjusting = false; _previewTimer.Stop(); PlayPendingPreview(); };
+            slider.LostMouseCapture += delegate { if (row.MouseAdjusting && Mouse.LeftButton == MouseButtonState.Released) { row.MouseAdjusting = false; _previewTimer.Stop(); PlayPendingPreview(); } };
+            slider.PreviewMouseWheel += delegate(object sender, MouseWheelEventArgs e) { row.SuppressPreview = true; try { slider.Value = Math.Max(0, Math.Min(100, slider.Value + Math.Sign(e.Delta) * 2)); } finally { row.SuppressPreview = false; } e.Handled = true; };
             Grid.SetColumn(slider, 1); container.Children.Add(slider);
             row.Slider = slider; row.Container = container;
             return row;
@@ -517,7 +686,7 @@ namespace Win10Audio
             catch { return null; }
         }
         private void TryAudio(Action action) { try { action(); } catch (Exception error) { Program.Log(error); _signature = null; } }
-        private void OpenSettings(string uri) { Hide(); _timer.Stop(); try { Process.Start(uri); } catch (Exception error) { Program.Log(error); } }
+        private void OpenSettings(string uri) { CloseAnimated("settings"); try { Process.Start(uri); } catch (Exception error) { Program.Log(error); } }
 
         private void PositionAtTray()
         {
@@ -578,6 +747,8 @@ namespace Win10Audio
             public string Name;
             public string DeviceId;
             public bool IsMuted;
+            public bool MouseAdjusting;
+            public bool SuppressPreview;
             public Grid Container;
             public Slider Slider;
             public TextBlock Glyph;

@@ -186,6 +186,7 @@ namespace Win10Audio
         {
             { "SoundOutput", new[] { "Sound output", "Saída de som" } },
             { "Close", new[] { "Close", "Fechar" } },
+            { "InputDevice", new[] { "Input devices", "Dispositivos de entrada" } },
             { "OutputDevice", new[] { "Output device", "Dispositivo de saída" } },
             { "SpatialAudio", new[] { "Spatial audio", "Áudio espacial" } },
             { "VolumeMixer", new[] { "Volume mixer", "Mixer de volume" } },
@@ -203,11 +204,14 @@ namespace Win10Audio
             { "AudioDeviceFallback", new[] { "Audio device", "Dispositivo de áudio" } },
             { "ApplicationFallback", new[] { "Application", "Aplicativo" } },
             { "NoOutputs", new[] { "No audio output connected", "Nenhuma saída de áudio conectada" } },
+            { "NoInputs", new[] { "No audio input connected", "Nenhuma entrada de áudio conectada" } },
             { "AudioAccessError", new[] { "Unable to access the audio device. Try opening the panel again.", "Não foi possível acessar o dispositivo de áudio. Tente abrir novamente." } },
             { "OutputFileRequired", new[] { "Specify the output file.", "Informe o arquivo de saída." } },
             { "IntegrationError", new[] { "Volume panel integration failed: ", "Falha na integração do painel de volume: " } },
             { "SelectOutputError", new[] { "Select an output device.", "Escolha um dispositivo de saída." } },
+            { "SelectInputError", new[] { "Select an input device.", "Escolha um dispositivo de entrada." } },
             { "OutputDisconnectedError", new[] { "This device was disconnected. Open the panel again.", "Esse dispositivo foi desconectado. Abra o menu novamente." } },
+            { "InputDisconnectedError", new[] { "This input device was disconnected. Open the panel again.", "Esse dispositivo de entrada foi desconectado. Abra o menu novamente." } },
             { "SessionEndedError", new[] { "The app's audio session ended. Open the panel again.", "O aplicativo encerrou sua sessão de áudio. Abra o menu novamente." } },
             { "NoOutputError", new[] { "No output device connected.", "Nenhum dispositivo de saída conectado." } },
             { "OutputChangedError", new[] { "The audio output changed. Refresh the panel before adjusting the volume.", "A saída de áudio mudou. Atualize o painel antes de ajustar o volume." } },
@@ -220,6 +224,8 @@ namespace Win10Audio
             { "LanguageSaveError", new[] { "Unable to save the language preference. The previous language is still selected.", "Não foi possível salvar a preferência de idioma. O idioma anterior continua selecionado." } },
             { "DemoSpeakers", new[] { "Speakers", "Alto-falantes" } },
             { "DemoHeadphones", new[] { "Headphones", "Fones de ouvido" } },
+            { "DemoMicrophone", new[] { "Microphone", "Microfone" } },
+            { "DemoWebcamMic", new[] { "Webcam microphone", "Microfone da webcam" } },
             { "DemoBrowser", new[] { "Browser", "Navegador" } },
             { "DemoMusic", new[] { "Music", "Música" } }
         };

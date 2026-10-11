@@ -15,6 +15,7 @@ namespace Win10Audio
         public string Id { get; set; }
         public string Name { get; set; }
         public bool IsDefault { get; set; }
+        public bool IsInput { get; set; }
     }
 
     public sealed class AudioVolume
@@ -44,7 +45,11 @@ namespace Win10Audio
         private static readonly Guid EventContext = new Guid("177453C9-9D97-4B82-9376-0E277792C06D");
         private static readonly object SyncRoot = new object();
 
-        public static List<AudioDevice> GetDevices()
+        public static List<AudioDevice> GetDevices() { return GetDevices(0); }
+
+        public static List<AudioDevice> GetInputDevices() { return GetDevices(1); }
+
+        private static List<AudioDevice> GetDevices(int flow)
         {
             lock (SyncRoot)
             {
@@ -56,9 +61,9 @@ namespace Win10Audio
                 {
                     enumerator = CreateEnumerator();
                     string defaultId = null;
-                    if (enumerator.GetDefaultAudioEndpoint(0, 1, out defaultDevice) >= 0 && defaultDevice != null)
+                    if (enumerator.GetDefaultAudioEndpoint(flow, 1, out defaultDevice) >= 0 && defaultDevice != null)
                         Check(defaultDevice.GetId(out defaultId));
-                    Check(enumerator.EnumAudioEndpoints(0, 1, out collection));
+                    Check(enumerator.EnumAudioEndpoints(flow, 1, out collection));
                     uint count;
                     Check(collection.GetCount(out count));
                     for (uint i = 0; i < count; i++)
@@ -69,7 +74,7 @@ namespace Win10Audio
                             Check(collection.Item(i, out device));
                             string id;
                             Check(device.GetId(out id));
-                            result.Add(new AudioDevice { Id = id, Name = ReadDeviceName(device), IsDefault = String.Equals(id, defaultId, StringComparison.OrdinalIgnoreCase) });
+                            result.Add(new AudioDevice { Id = id, Name = ReadDeviceName(device), IsDefault = String.Equals(id, defaultId, StringComparison.OrdinalIgnoreCase), IsInput = flow == 1 });
                         }
                         catch (COMException) { /* The endpoint may have just been unplugged. */ }
                         finally { Release(device); }
@@ -135,12 +140,22 @@ namespace Win10Audio
 
         public static void SetDefaultDevice(string deviceId)
         {
-            if (String.IsNullOrEmpty(deviceId)) throw new ArgumentException(Localization.Text("SelectOutputError"), "deviceId");
+            SetDefaultDevice(deviceId, 0);
+        }
+
+        public static void SetDefaultInputDevice(string deviceId)
+        {
+            SetDefaultDevice(deviceId, 1);
+        }
+
+        private static void SetDefaultDevice(string deviceId, int flow)
+        {
+            if (String.IsNullOrEmpty(deviceId)) throw new ArgumentException(Localization.Text(flow == 1 ? "SelectInputError" : "SelectOutputError"), "deviceId");
             lock (SyncRoot)
             {
                 bool found = false;
-                foreach (AudioDevice device in GetDevices()) if (String.Equals(device.Id, deviceId, StringComparison.OrdinalIgnoreCase)) found = true;
-                if (!found) throw new InvalidOperationException(Localization.Text("OutputDisconnectedError"));
+                foreach (AudioDevice device in GetDevices(flow)) if (String.Equals(device.Id, deviceId, StringComparison.OrdinalIgnoreCase)) found = true;
+                if (!found) throw new InvalidOperationException(Localization.Text(flow == 1 ? "InputDisconnectedError" : "OutputDisconnectedError"));
                 IMMDeviceEnumerator enumerator = null;
                 IPolicyConfig policy = null;
                 string[] previous = new string[3];
@@ -153,7 +168,7 @@ namespace Win10Audio
                         IMMDevice previousDevice = null;
                         try
                         {
-                            if (enumerator.GetDefaultAudioEndpoint(0, role, out previousDevice) >= 0 && previousDevice != null)
+                            if (enumerator.GetDefaultAudioEndpoint(flow, role, out previousDevice) >= 0 && previousDevice != null)
                                 Check(previousDevice.GetId(out previous[role]));
                         }
                         finally { Release(previousDevice); }

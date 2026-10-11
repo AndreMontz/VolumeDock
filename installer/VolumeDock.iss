@@ -2,7 +2,7 @@
 ; Silent isolated package check: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DIR="<test-directory>"
 ; The startup task is selected for normal installs. Silent installs never launch the app.
 #define AppName "VolumeDock"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #define AppExe "VolumeDock.exe"
 
 [Setup]

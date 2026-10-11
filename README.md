@@ -2,7 +2,7 @@
 
 **Windows 11's sound-output layout, with the look and feel of Windows 10.**
 
-VolumeDock puts output devices, master volume, and per-app sliders in one compact panel. Open it from the existing Windows volume icon or press **Ctrl + Win + V**.
+VolumeDock puts input and output devices, spatial audio, system volume, and per-app sliders in one compact panel. Open it from the existing Windows volume icon or press **Ctrl + Win + V**.
 
 [Download a release](https://github.com/AndreMontz/VolumeDock/releases) · [Report an issue](https://github.com/AndreMontz/VolumeDock/issues)
 
@@ -12,20 +12,22 @@ VolumeDock puts output devices, master volume, and per-app sliders in one compac
 
 ## What it does
 
-- Switch between connected output devices with one click. The selected device becomes the default for normal playback and communications.
+- Switch between connected output and input devices with one click. The selected device becomes the Windows default for playback or recording, including communications.
 - Adjust master volume and the audio sessions on the selected output. Click an app's icon to mute or unmute it; hover to see its name and volume.
+- Expand only the input devices, output devices, spatial-audio, or volume-mixer section you need. All four sections start collapsed each time the panel opens.
 - Keep the familiar Windows 10 colors, square edges, sliders, and optional transparency. The panel follows the system theme and accent color when started.
+- Use the brief fade and staggered title motion that matches Windows taskbar flyouts.
 - Open from the native taskbar volume icon, without an additional tray icon. The original right-click menu remains available.
 - Toggle the panel with **Ctrl + Win + V**. Dismiss it by clicking outside, pressing **Esc**, or clicking the back arrow.
-- Hear a short Windows sound when changing master volume or System Sounds. App sliders remain silent.
+- Hear one short sample after clicking or dragging the system-volume slider. Scrolling and keyboard volume controls do not play a sample; app sliders remain silent.
 - See the selected output's spatial-audio status and open Windows sound settings to change it.
 - Follow the Windows display language automatically, or choose English or Português (Brasil) in the panel.
 
 ## Install
 
-Download **`VolumeDock-1.0.0-Setup-x64.exe`** from [Releases](https://github.com/AndreMontz/VolumeDock/releases) and run it. Choose English or Português (Brasil) in the installer, then select the installation location and startup options.
+Download **`VolumeDock-1.0.1-Setup-x64.exe`** from [Releases](https://github.com/AndreMontz/VolumeDock/releases) and run it. Setup detects the Windows display language and lets you choose English or Português (Brasil), then select the installation location and startup options.
 
-For a portable copy, download **`VolumeDock-1.0.0-Portable-x64.zip`**, extract the entire archive to a writable folder, and run **`VolumeDock.exe`**. Keep the included license files with the application.
+For a portable copy, download **`VolumeDock-1.0.1-Portable-x64.zip`**, extract the entire archive to a writable folder, and run **`VolumeDock.exe`**. Keep the included license files with the application.
 
 **Requirements:** Windows 10 x64, version 1809 or later, with [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48) or later and the Windows volume icon enabled. Tested on Windows 10 22H2. Windows 11 and 32-bit Windows are not supported targets for this release.
 
@@ -35,7 +37,7 @@ The installer works for the current user without administrator access. Starting 
 
 1. Start VolumeDock.
 2. Click the Windows volume icon or press **Ctrl + Win + V**.
-3. Select an output device, drag a slider, or click an app icon to toggle mute.
+3. Expand a section, select an input or output device, or adjust a volume slider. Click an app icon to toggle mute.
 
 The mixer displays existing audio sessions on the default output. An app may need to play audio once before it appears. Apps configured to use a different output remain on that output; VolumeDock does not change per-app routing.
 
@@ -43,7 +45,7 @@ The spatial-audio row reads the actual Windows configuration. Clicking it opens 
 
 ## Language
 
-VolumeDock follows the Windows display language by default: Portuguese uses **Português (Brasil)**, and other languages use **English**. Click the globe in the panel's footer to choose **System language (automatic)**, **English**, or **Português (Brasil)**. The change takes effect immediately.
+The installer offers **English** and **Português (Brasil)** and preselects the language based on Windows. The app follows the Windows display language by default: Portuguese uses **Português (Brasil)**, and other languages use **English**. Click the globe in the panel's footer to choose **System language (automatic)**, **English**, or **Português (Brasil)**. The change takes effect immediately.
 
 On a first installation, choosing a setup language different from the Windows language also selects that language for the app. Upgrades preserve your existing app preference. Portable copies start with automatic selection.
 
@@ -85,7 +87,7 @@ To generate release packages, install [Inno Setup](https://jrsoftware.org/isinfo
 
 The installer specification is in [`installer/VolumeDock.iss`](installer/VolumeDock.iss).
 
-The executable is written to `build/`; the installer, portable ZIP, and `SHA256SUMS.txt` are written to `dist/`. Render documentation previews with representative data, without accessing the computer's audio devices or changing the saved language preference:
+The executable is written to `build/`; the installer, portable ZIP, source ZIP, and `SHA256SUMS.txt` (covering all three archives) are written to `dist/`. Render documentation previews with representative data, without accessing the computer's audio devices or changing the saved language preference:
 
 ```powershell
 .\build\VolumeDock.exe --render-demo docs\images\panel.png --preview-language=en

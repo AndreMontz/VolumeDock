@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $buildRoot = Join-Path $repoRoot 'build'
 $distRoot = Join-Path $repoRoot 'dist'
+$version = '1.0.1'
 & (Join-Path $PSScriptRoot 'build.ps1')
 if (!$InnoCompiler) {
     $candidates = @(
@@ -16,9 +17,28 @@ if (!$InnoCompiler -or !(Test-Path -LiteralPath $InnoCompiler)) { throw 'Install
 New-Item -ItemType Directory -Path $distRoot -Force | Out-Null
 & $InnoCompiler (Join-Path $repoRoot 'installer\VolumeDock.iss')
 if ($LASTEXITCODE -ne 0) { throw 'VolumeDock installer compilation failed.' }
-$portablePath = Join-Path $distRoot 'VolumeDock-1.0.0-Portable-x64.zip'
+$portablePath = Join-Path $distRoot "VolumeDock-$version-Portable-x64.zip"
 Compress-Archive -Path (Join-Path $buildRoot '*') -DestinationPath $portablePath -Force
-$assets = @((Join-Path $distRoot 'VolumeDock-1.0.0-Setup-x64.exe'),$portablePath)
+$sourcePath = Join-Path $distRoot "VolumeDock-$version-Source.zip"
+$sourceStage = Join-Path ([IO.Path]::GetTempPath()) "VolumeDock-$version-source-$([guid]::NewGuid().ToString('N'))"
+$sourceProject = Join-Path $sourceStage 'VolumeDock'
+New-Item -ItemType Directory -Path $sourceProject -Force | Out-Null
+try {
+    foreach ($name in @('assets','docs','installer','licenses','scripts','src')) {
+        Copy-Item -LiteralPath (Join-Path $repoRoot $name) -Destination $sourceProject -Recurse
+    }
+    foreach ($name in @('.gitattributes','.gitignore','LICENSE','README.md','THIRD_PARTY_NOTICES.md')) {
+        Copy-Item -LiteralPath (Join-Path $repoRoot $name) -Destination $sourceProject
+    }
+    Compress-Archive -Path $sourceProject -DestinationPath $sourcePath -Force
+} finally {
+    $resolvedStage = [IO.Path]::GetFullPath($sourceStage)
+    $resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    if ($resolvedStage.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolvedStage)) {
+        Remove-Item -LiteralPath $resolvedStage -Recurse -Force
+    }
+}
+$assets = @((Join-Path $distRoot "VolumeDock-$version-Setup-x64.exe"),$portablePath,$sourcePath)
 $checksumLines = foreach ($asset in $assets) {
     $checksum = Get-FileHash -LiteralPath $asset -Algorithm SHA256
     $checksum.Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($asset)
